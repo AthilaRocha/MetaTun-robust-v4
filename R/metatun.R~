@@ -1,0 +1,366 @@
+
+##This is the "main" function
+##mode=1, eliminate candidates
+##mode=2, does not eliminate candidates
+MetaTun <-function(optpar,fvalueopt,Function,order,budget,mode,typeofresult="mean"){
+
+  #set.seed(1234)
+
+  dist_eucli <- data.frame(exec=numeric(0),iter=numeric(0),dist=numeric(0))
+  gapt_opt <- data.frame(exec=numeric(0),gap=numeric(0))
+  sum_sqerror <-data.frame(exec=numeric(0),iter=numeric(0),sum=numeric(0))
+  
+  modelsevolution <- list(0)
+  nextid <-0
+  instances <-c(1:100)
+  datatuning <- ReadParametersData(Function)
+  
+  best_par <- numeric(length(datatuning$name))
+  initialcandidates <- ((length(datatuning$name))^2 * order)*3
+  compbudget <- budget
+  
+  
+  if ((typeofresult!="mean") & (typeofresult!="sumrankings") & (typeofresult!="meanrankings")){
+    stop("Error!! The parameter 'typeofresult' must be equal to 'mean' or 'sumrankings' or 'meanrankings'")
+  }
+  
+  if ((initialcandidates*5)>budget){
+    stop("Error!! The computational budget is not enough to perform the evaluation of initial candidates")
+  }
+  
+  minerrorsimmodel <- Inf
+  dist <- Inf
+  firstinstance <-1
+
+  acrossinstancedata <- matrix(ncol=10000,nrow=1000)
+  acrossinstancedata <- GenerateAcrossInstance(ncols=ncol(acrossinstancedata),nrows=nrow(acrossinstancedata))
+  
+  #print(acrossinstancedata[1:10,1:40])
+  
+  firstcandidate <- 1
+  firstinstance <- 1
+  lastinstance <- 5
+  instancespertest <- 1
+  
+  nbcandidates <- ceiling(initialcandidates*.2)
+  sqerror  <- matrix(ncol=(nbcandidates-1),nrow=0)
+  
+  it <- 1
+  
+  while(TRUE) {
+    
+        cat("\n")
+        print("Iteration nro. ")
+        cat(it)
+        cat("\n")
+        
+        if (it==1){
+          
+          validmodel <- FALSE
+          ntrylhs <- 1
+          
+           while((!validmodel)&&(compbudget>=(initialcandidates*lastinstance))){
+             allcandidates <- matrix(ncol=(length(datatuning$name)+1),nrow=0)
+             allcandidates<-GenInitialCandidates(initialcandidates,datatuning,allcandidates)
+             Results <- matrix(ncol=0, nrow=0)
+             Results <- EvaluateCandidates(Results,allcandidates,instances,FUN=eval(parse(text=Function)),firstcandidate,allcandidates[nrow(allcandidates),ncol(allcandidates)],firstinstance,lastinstance,acrossinstancedata)
+             #print(Results)
+             
+             if (typeofresult=="mean") Resultsnorm <- NormalizeResults(Results)
+             else Resultsnorm <- Results
+             
+             print("Evaluation of candidates before scaling results in an [0,1] scale")
+             print(Resultsnorm)
+             
+             cat("\n")
+             cat("\n")
+             print("--------------------Regression Modeling------------------------")
+             
+             model<-RegModel(Resultsnorm,allcandidates,datatuning,typeofresult,order)
+             modelsum <- summary(model)
+             terms<- model$coefficients
+             if (((attr(model[1][[1]][1],"names"))==("(Intercept)")) && ((modelsum$coefficients[1,"Pr(>|t|)"])<0.05)) intercept <- terms[1] else intercept <- 0
+             termsequation <- attr(model[1][[1]],"names")
+             
+             modelsum <- data.frame(Estimate=modelsum$coefficients[,"Estimate"],StdError=modelsum$coefficients[,"Std. Error"], tvalue=modelsum$coefficients[,"t value"],pvalue=modelsum$coefficients[,"Pr(>|t|)"])
+             modelpruned <- modelsum[(modelsum[,"pvalue"]<0.05),]  
+        
+             if (((nrow(modelpruned)>1)) || (((nrow(modelpruned)==1)) && (intercept==0)))  {
+                   validmodel <- TRUE
+                   modelsum <- modelpruned
+             }
+             compbudget <- budget -((lastinstance*ncol(Resultsnorm))*ntrylhs)
+             ntrylhs <- ntrylhs + 1
+             if (ntrylhs==4) {
+               validmodel=TRUE
+               if (intercept==0) intercept <- terms[1]
+             }
+           }
+          
+           if (validmodel==FALSE) stop("It was impossible generate a first valid regression model using the computational budget provided")
+           else { 
+              print("Initial Candidates")
+              print(allcandidates)
+           }
+          
+        }
+        else {
+          Results <- EvaluateCandidates(Results,allcandidates,instances,FUN=eval(parse(text=Function)),firstcandidate,allcandidates[nrow(allcandidates),ncol(allcandidates)],firstinstance,lastinstance,acrossinstancedata)
+          #print(Results)
+          
+          if (typeofresult=="mean") Resultsnorm <- NormalizeResults(Results)
+          else Resultsnorm <- Results
+          
+          print("Evaluation of candidates before scaling results in an [0,1] scale")
+          print(Resultsnorm)
+          
+          cat("\n")
+          cat("\n")
+          print("--------------------Regression Modeling------------------------")
+          
+          model<-RegModel(Resultsnorm,allcandidates,datatuning,typeofresult,order)
+          modelsum <- summary(model)
+          terms<- model$coefficients
+          if (((attr(model[1][[1]][1],"names"))==("(Intercept)")) && ((modelsum$coefficients[1,"Pr(>|t|)"])<0.05)) intercept <- terms[1] else intercept <- 0
+          termsequation <- attr(model[1][[1]],"names")
+          
+          modelsum <- data.frame(Estimate=modelsum$coefficients[,"Estimate"],StdError=modelsum$coefficients[,"Std. Error"], tvalue=modelsum$coefficients[,"t value"],pvalue=modelsum$coefficients[,"Pr(>|t|)"])
+          modelpruned <- modelsum[(modelsum[,"pvalue"]<0.05),]  
+          
+          if (nrow(modelpruned)>1) modelsum <- modelpruned
+          else if ((nrow(modelpruned)==1) && (intercept==0)) modelsum <- modelpruned
+          else  intercept <- terms[1]
+          
+          compbudget <- compbudget - budgetneeded
+        }
+        
+        
+        cat("\n")
+        print("Model Obtained")
+        print(modelsum)
+        
+        selectedterms<-numeric(length(modelsum$Estimate))
+        for(i in 1:length(selectedterms)) selectedterms[i] <-  which(modelsum$Estimate[i]==terms)
+        
+        #print(selectedterms)
+        terms<-terms[selectedterms]
+        termsequation <- termsequation[selectedterms]
+        
+        #print("estrutura do modelo")
+        #print(attr(model[1][[1]][1],"names"))
+        #print("termsequation")
+        #print(termsequation)
+        #model<-summary(model)
+      
+        #print("calculo da estatistica")
+        #print(modelsum)
+        #fstat <- modelsum$fstatistic
+        #pvaluefstat <- 1-pf(fstat[1],fstat[2],fstat[3])
+        #  if (pvaluefstat<.05){
+    
+        
+        models<-GenerateModels(modelsum,nbcandidates)
+        cat("\n")
+        print("Original Model and derivated models")
+        print(models)
+        modelsevolution <- c(modelsevolution,models[[1]])
+        
+        
+        newcandidates <- matrix(ncol=(length(datatuning$name)+1),nrow=0)
+        cat("\n")
+        print("-----------------------Optimizing Models...-------------------------")
+        #eq <- GetTermsEquation(terms,length(datatuning$name))
+        
+        
+        funcorigin <- BuildFunction(intercept,termsequation,datatuning,models,1)
+        funcultimo <- funcorigin
+        equationsforopt <- rep(funcorigin,length(models))
+        fvalueorigin <- EvaluateFunction(FUN=eval(parse(text=funcorigin)),allcandidates)
+        sqerror <- rbind(sqerror,1)
+        
+        responseofsimmodel <- EvaluateFunction(FUN=eval(parse(text=Function)),allcandidates) 
+        
+        if ((sum((responseofsimmodel-fvalueorigin)^2))<minerrorsimmodel) {
+              minerrorsimmodel <- (sum((responseofsimmodel-fvalueorigin)^2))
+              bestmodel <- models[1]
+              funcbest <- funcorigin
+        }
+        
+        for (l in 2:length(models)) {
+            funcmodel <- BuildFunction(intercept,termsequation,datatuning,models,l)
+            equationsforopt[l]<-funcmodel
+            fvaluemodel <-  EvaluateFunction(FUN=eval(parse(text=funcmodel)),allcandidates) 
+            sqerror[it,l-1] <- sum((fvalueorigin-fvaluemodel)^2)
+            
+            if ((sum((responseofsimmodel-fvaluemodel)^2))<minerrorsimmodel) {
+              minerrorsimmodel <- (sum((responseofsimmodel-fvaluemodel)^2))
+              bestmodel <- models[l]
+              funcbest <- funcmodel
+            }   
+            
+        }
+        
+        print("Squared errors in the iteration")
+        print(sqerror[it,])
+        print("Summation of squared errors")
+        print(sum(sqerror[it,]))
+        
+        
+        cat("\n")
+        cat("----------Computational Budget remaining----------")
+        cat("\n")
+        cat(compbudget)
+        cat(" Experiments")
+        cat("\n")
+        
+        
+        if (mode==1) budgetneeded <- ((nbcandidates*lastinstance) + (ncol(Resultsnorm)*instancespertest))
+        else budgetneeded <- ((nbcandidates*lastinstance) + ((nbcandidates+ncol(Resultsnorm))*instancespertest))
+        
+        
+        if (compbudget>budgetneeded) {
+            newcandidates <-as.matrix(Optimize(equationsforopt,models,datatuning,1))
+    
+            nextid<-initialcandidates +(it-1)*nbcandidates + 1
+            firstcandidate <- nextid
+            newcandidates[,(ncol(newcandidates))] <- c((nextid):(nextid+nrow(newcandidates)-1)) 
+            allcandidates <- rbind(allcandidates,newcandidates)
+    
+            Results <- EvaluateCandidates(Results,allcandidates,instances,FUN=eval(parse(text=Function)),firstcandidate,allcandidates[nrow(allcandidates),ncol(allcandidates)],firstinstance,lastinstance,acrossinstancedata)
+            print(Results)
+    
+            if (typeofresult=="mean") Resultsnorm <- NormalizeResults(Results)
+            else Resultsnorm <- Results
+    
+            if (mode==1){
+               nbeliminated <- nbcandidates 
+               died <- EliminateCandidates(allcandidates,Resultsnorm,nbeliminated)
+               allcandidates <- allcandidates[-died,] 
+               Results <- Results[,-died]
+               print("All Candidates after eliminating phase")
+               print(allcandidates)
+            }
+            
+            #This message is used when not eliminating candidates
+            #cat("\n")
+            #print("Evaluation after normalizing all performances")
+            #print(Resultsnorm)
+    
+            firstinstance <- lastinstance+1
+            lastinstance <- firstinstance+instancespertest-1
+        }
+        else {
+               cat("\n")
+               cat("The computational budget remaining is not sufficient to perform another iteration")
+               cat("\n")
+               cat("The method will be finished")
+               cat("\n")
+               
+               bestiter <- ReturnElite(Results,1,allcandidates)
+               
+               dists <- numeric(nrow(allcandidates))
+               for (l in 1:(nrow(allcandidates))) dists[l] <- DistEucli(allcandidates[l,1:((ncol(allcandidates))-1)],optpar) 
+               
+               if (min(dists)<dist) {
+                 dist <- min(dists)  
+                 closestcand <- allcandidates[(order(dists)[1]),1:((ncol(allcandidates))-1)]
+               }
+               
+               dist_eucli[nrow(dist_eucli)+1,] <- c(NA,it,dist)
+               sum_sqerror[nrow(sum_sqerror)+1,] <- c(NA,it,sum(sqerror[it,]))
+               
+               break
+        }
+        
+        bestiter <- ReturnElite(Results,1,allcandidates)
+        
+        dists <- numeric(nrow(allcandidates))
+        for (l in 1:(nrow(allcandidates))) dists[l] <- DistEucli(allcandidates[l,1:((ncol(allcandidates))-1)],optpar) 
+        
+        if (min(dists)<dist) {
+          dist <- min(dists)  
+          closestcand <- allcandidates[(order(dists)[1]),1:((ncol(allcandidates))-1)]
+        }
+        
+        dist_eucli[nrow(dist_eucli)+1,] <- c(NA,it,dist)
+        sum_sqerror[nrow(sum_sqerror)+1,] <- c(NA,it,sum(sqerror[it,]))
+        it <- it + 1
+  }
+
+
+   e<-ReturnElite(Results,3,allcandidates)
+   best_par <- e[1,1:(ncol(e)-1)]
+   colnames(e) <- c(as.vector(datatuning$name),"Id")
+   best_par <- cbind(best_par)
+   colnames(best_par)[ncol(best_par)] <- c("exec")
+   best_par["exec"] <- NA
+   
+   valuefbest <- EvaluateOne(closestcand,FUN=eval(parse(text=Function)),1)
+   
+   if (fvalueopt==0) gap <- valuefbest-fvalueopt
+   else  gap <- (abs(valuefbest-fvalueopt)/abs(fvalueopt))
+   
+   gapt_opt[1,] <- c(NA,gap)
+   best_par <-as.data.frame(t(best_par))
+   
+   cat("\n")
+   cat("Best Candidates")
+   cat("\n")
+   cat("-=================================================================================================-")
+   cat("\n")
+   print(e)
+   cat("-=================================================================================================-")
+   cat("\n")
+
+   modelfinal <- c(NA,models[[1]],names(terms))
+   cat("\n")
+   cat("Regression Model for Algorithm behavior")
+   cat("\n")
+   cat("-=================================================================================================-")
+   cat("\n")
+   print(models[[1]])
+   cat("-=================================================================================================-")
+   cat("\n")
+   
+   modelsevolution <- modelsevolution[-1]
+   cat("\n")
+   cat("Evolution of regression models obtained along the iterations \n")
+   cat("-=================================================================================================-")
+   cat("\n")
+   print(modelsevolution)
+   cat("-=================================================================================================-")
+   cat("\n")
+   cat("\n")
+   cat("Squared Error of each model generated at each iteration in relation to the original function")
+   cat("\n")
+   cat("-=================================================================================================-")
+   cat("\n")
+   print(sqerror)
+   cat("-=================================================================================================-")
+   cat("\n")
+   cat("\n")
+   cat("Sum of Squared Error for models at each iteration")
+   cat("\n")
+   print(rowSums(sqerror))
+   cat("-=================================================================================================-")
+   cat("\n")
+   cat("Model with the minimum squared error in relation to original function")
+   cat("\n")
+   print(bestmodel)
+   cat("-=================================================================================================-")
+   
+   
+   
+   
+   cat("\n")
+   cat("The structure of parameters to be tuned. Describing the names, ranges, values(in case of categorical ones) and the type of parameters\n")
+   cat("-=================================================================================================-")
+   cat("\n")
+   print(datatuning)
+   cat("-=================================================================================================-")
+   
+   return(list(best_par,gapt_opt, dist_eucli,sum_sqerror,modelfinal,funcbest,funcultimo))
+}
+
+##Não esquecer de incluir tratamento de pseudoreplicação!!!
+

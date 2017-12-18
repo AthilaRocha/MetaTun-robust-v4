@@ -1,0 +1,10 @@
+Package: MetaTun
+Type: Optimization Algorithms Package
+Title: Package for tuning Metaheuristics (using Robust Regression)
+Version: 0.1
+Date: 2017-23-17
+Author: Athila Rocha and Felipe Campelo
+Maintainer: Athila Rocha <rochaathila@gmail.com>
+Description: I will do this later
+License: GPL?
+LazyData: TRUE

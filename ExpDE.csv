@@ -1,0 +1,5 @@
+name,min,max,values,type
+popsize,20,100,NA,i
+alpha,0,0.5,NA,r
+beta,0,0.5,NA,r
+f,0,1,NA,r

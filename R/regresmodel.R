@@ -1,0 +1,295 @@
+##################This function determines the regression model, according to the values of dependent and#######################
+####independent variables, its labels, the typeofresult (mean is default), order and method. (tau required if quantile)#########
+#####entire informatios of models are returned, like the model itself and uncertainties associated with each coefficient########
+RegModel <-function(Results, allcandidates,datatuning,typeofresult,order,method,tau,weights){
+
+  y <- numeric(ncol(Results))
+  
+  if (typeofresult=="mean") y <- apply(Results,FUN=mean,na.rm=TRUE,MARGIN=2)
+  else {
+           ranks <- matrix(ncol=ncol(Results),nrow=nrow(Results))
+           for(i in 1:nrow(Results)) ranks[i,] <- rank(Results[i,])
+           if (typeofresult=="sumrankings") y <- colSums(ranks)
+           else y <- apply(ranks,FUN=mean, na.rm=TRUE,MARGIN=2)
+  }
+  
+  variables <- ncol(allcandidates)-1
+  dataformodel <- matrix(ncol=variables+2,nrow=ncol(Results))
+  dataformodel[,2:ncol(dataformodel)] <- allcandidates[,1:(ncol(allcandidates))]
+  
+  #scaling the independent variables in a [0,1] scale
+  dataformodel[,2:(ncol(dataformodel)-1)] <- NormalizeData(dataformodel[,2:(ncol(dataformodel)-1)],direction="cols")
+
+  
+  dataformodel[,1]<-y
+  columns <- c(c(as.character(datatuning$name)),"Id")
+  colnames(dataformodel)<-c("y",columns)
+  dataformodel <-as.data.frame(dataformodel)
+  
+  if ((method!="lasso") & (method!="ridge"))  {
+    if (method=="ols") expr <- "lm(dataformodel$y~poly("
+      else if (method=="irls") expr <- "rlm(dataformodel$y~poly("
+       else if (method=="quant")  expr <- "rq(dataformodel$y~poly("
+  
+  stringaux <- ""
+       
+  for (i in 2:(ncol(dataformodel)-1)){
+    stringaux <- paste0(stringaux,"dataformodel$",collapse=NULL)
+    stringaux <- paste0(stringaux,as.character(colnames(dataformodel)[i]),collapse=NULL)
+    stringaux <- paste0(stringaux,",",collapse=NULL)
+  }
+       
+  expr <- paste0(expr,stringaux,collapse=NULL)
+  expr <- paste0(expr,"degree=")
+  expr <- paste0(expr,as.character(order),collapse=NULL)
+  expr <- paste0(expr,",raw=TRUE)",collapse=NULL)  
+  
+  
+  #if (method=="ols") {
+  #  if (!is.na(weights[1])) expr <- paste0(expr,",weights=weights") 
+  #  expr <- paste0(expr,")",collapse=NULL)
+  #}
+  #else 
+    if (method=="quant") {
+            expr <- paste0(expr,",tau=",collapse=NULL)
+            expr <- paste0(expr,tau,collapse=NULL)
+            
+    }
+  
+  if (!is.na(weights[1])) expr <- paste0(expr,",weights=weights") 
+  expr <- paste0(expr,")",collapse=NULL)
+  
+  
+        # else {
+        #   expr <- paste0(expr,",raw=TRUE),method=\"MM\",maxit=",collapse=NULL)
+        #   maxit <- niterirls
+        #   expr <- paste0(expr,as.character(maxit),collapse=NULL)
+        #   expr <- paste0(expr,")",collapse=NULL)
+        # }
+  }
+  else {      
+    
+    termsreg <- Termsregression(c(as.character(datatuning$name)),order)
+    X<-Buildridgelasso(dataformodel,termsreg)
+    
+    if (method=="lasso") alpha <- 1 else alpha <- 0
+    regridgelasso <- cv.hqreg(X,dataformodel$y,alpha=alpha)   ###performs cross-validation for elastic-net penalized Huber loss regression 
+                                                              ###and quantile regression (Humber loss is default) over a sequence of 
+                                                              ###lambda values and find an optimal lambda
+    
+    coefsridgelasso<-(coef(regridgelasso,regridgelasso$lambda.min))
+    
+    print("Non-zero and zero coefficients: ")
+    print(coefsridgelasso)
+    
+    if (length(which(coefsridgelasso[2:length(coefsridgelasso)]==0))==(length(coefsridgelasso)-1)) return(list(NA))
+  
+    ################call to the function that return the uncertainty associated to the ridge/lasso regression####################
+    modelridgelasso <- Buildmodelridgelasso(dataformodel,coefsridgelasso,termsreg,10)
+    
+  }
+    
+  if ((method!= "lasso") & (method!="ridge")) {
+        model1<-eval(parse(text=expr))
+        return(model1)     
+  }
+  else return(modelridgelasso)
+
+    
+  ##an explicit second-order regression. I used this to verify if the use of "polym" function for second-order regression works, comparing their results (they are the same)
+  #r<- lm(as.formula("dataformodel$y ~ dataformodel$Mutation + dataformodel$Crossover + dataformodel$Selection +
+  #                  + dataformodel$Mutation*dataformodel$Crossover + dataformodel$Mutation*dataformodel$Selection + dataformodel$Crossover*dataformodel$Selection +
+  #                  I(dataformodel$Mutation^2) + I(dataformodel$Crossover^2) + I(dataformodel$Selection^2)"))
+  #print(summary(r))
+  
+}
+
+###########This function is an auxiliar function called by RegModel. In the case of ridge and lasso regression, the uncertainty of ##########
+###########ridge/lasso models are obtained generating a number "t" of new ridge/lasso models, each one generated by removing#################
+###########one observation of the data. The uncertainties of the coefficients of original ridge/lasso model are based on the ################
+############################variances of the coefficients obtained for these "t" new ridge/lasso models######################################
+Buildmodelridgelasso <- function(dataformodel,coefsridgelasso,termsreg,nobsout){
+  
+  if (coefsridgelasso[1]==0) { 
+    k<- 1 
+    intercept <- 0
+  }
+  else {
+    k<-2 ##if intercept==0 the first term is a regression-term, else if the intercept
+    intercept <- coefsridgelasso[1]
+  }
+  
+  coefsout <- which((coefsridgelasso)==0)   
+  if (length(coefsout)>0) coefsridgelasso <- coefsridgelasso[-coefsout]
+  validterms <- list()
+  
+  l <- 1
+  for(j in 1:length(termsreg)){
+    for(i in 1:nrow(termsreg[[j]])) {
+          if (!(is.element(k,coefsout))) {
+               validterms[[l]] <- as.matrix(t(termsreg[[j]][i,]))
+               l <- l + 1
+          }
+          k <- k + 1 
+    }
+  }
+  
+  obsout <- sample.int(nrow(dataformodel),nobsout)
+  matcoefs <- matrix(ncol=length(coefsridgelasso), nrow=(nobsout))
+  
+  matcoefs[1,] <- coefsridgelasso
+  for(i in 2:nobsout){
+    X1 <- Buildridgelasso(dataformodel, validterms)
+    X1 <- X1[-obsout[i],]
+    y  <- dataformodel$y[-obsout[i]]
+    hqreg <- hqreg(as.matrix(X1),y,nlambda=2,lambda=c(0,0))
+    for (j in 1:nrow(hqreg$beta)) matcoefs[i,j] <- mean(hqreg$beta[j,])
+  }
+  
+  sdcoefs <- apply(matcoefs,FUN=sd,MARGIN=2)
+  confintcoefs <- matrix(ncol=length(coefsridgelasso),nrow=2)
+  
+  confintcoefs[1,] <- coefsridgelasso-(sdcoefs/sqrt(nobsout))
+  confintcoefs[2,] <- coefsridgelasso+(sdcoefs/sqrt(nobsout))
+  
+  # print("Original Coefficients:")
+  # print(coefsridgelasso)
+  # 
+  # print("Standard Errors using cross-validation:")
+  # print(sdcoefs)
+  # 
+  # print("Confidence Interval using cross-validation:")
+  # print(confintcoefs)
+  # 
+  #print("Non-zero coefficients:")
+  #print(validterms)
+  
+  return(list(intercept,validterms,confintcoefs,coefsridgelasso))
+}
+
+###########This function generated perturbed models, based on the coefficient values of the original model and their uncertainties##########
+GenerateModels <-function(model,k,method){
+  
+  if (is.element(method,c("ols","quant","irls"))) {
+       models <- model
+       
+       models <- replicate(n = k, expr = models, simplify = F)
+  
+       if (is.matrix(models[[1]])){
+             for(i in 2:k){
+                     for(j in 1:nrow(models[[i]]))
+                           models[[i]][j,1] <-runif(1,(models[[1]][j,1]-models[[1]][j,2]),(models[[1]][j,1]+models[[1]][j,2]))
+                     models[[i]] <- models[[i]][,1:1]
+             }
+             models[[1]] <- models[[1]][,1:1]
+       }
+       else {
+         for(i in 2:k){
+             models[[i]][1] <-runif(1,(models[[1]][1]-models[[1]][2]),(models[[1]][1]+models[[1]][2]))
+           models[[i]] <- models[[i]][1:1]
+         }
+         models[[1]] <- models[[1]][1:1]
+         
+       }
+  }
+  else {
+    confint <- model[[1]]
+    valuescoefs <- numeric(ncol(confint))
+    models <- list(0)
+    models[[1]] <- model[[2]]
+    for(i in 2:k){
+      for(j in 1:ncol(confint)) valuescoefs[j] <- runif(1,confint[1,j],confint[2,j])
+      models[[i]] <- valuescoefs
+    }
+  }
+  
+     ##print("modelos:")
+     ##print(models)
+
+  return(models)
+}
+
+########This function eliminates non-valid coefficients of ols, quant and IRLS models, based on informations about their significance#######
+PruneModel <- function(model,method){
+    
+  if (is.element(method,c("ols","quant"))){
+       pvalues <- model$coefficients[,"Pr(>|t|)"]
+       pvalues <- which(pvalues<0.05)
+       termsvalid <- rownames(model$coefficients)[pvalues]
+       validmodel <- model$coefficients[(model$coefficients[,"Pr(>|t|)"]<0.05),]
+    }
+    else {
+      tvalues <- model$coefficients[,"t value"]
+      tvalues <- which(tvalues>=2.09)
+      termsvalid <- rownames(model$coefficients)[tvalues]
+      validmodel <- model$coefficients[(model$coefficients[,"t value"]>=2.09),]
+    }
+    
+    return(list(validmodel,termsvalid))
+}
+
+
+
+
+
+
+
+#lm
+#nls
+#model2<-lm(y~x+I(x^2)) --regression quadratic model with one variable
+#anova(model1,model2) -- F-test of significance of difference between two models
+#model1 is linear in regressors coefficients and variable x (y=Bo+B1x) and
+#model2 linear in coefficients but quadratic in x (y=Bo+B1x+B2*x²)
+
+#Example of using the gam function for multiple regression
+#x1 <- runif(70,0,1)
+#x2 <- runif(70,0,1)
+#x3 <- runif(70,0,1)
+#y <- 5 + 2*x1+3*x2+4*x3^2
+#pairs(list(x1,x2,x3,y),panel=panel.smooth)
+#library(mgcv)
+#par(mfrow=c(2,2))
+#model<-gam(y~s(x1)+s(x2)+s(x3))
+#plot(model)
+#par(mfrow=c(1,1)) you can see graphically the behavior of each regressor
+#summary(model)
+
+#using a tree model
+#dados<-data.frame(x1,x3,x3,y)
+#model<-rpart(y~.,data=dados)
+#model
+#or
+#model<-tree(y~.,data=dados)
+#plot(model)
+#text(model)
+
+#using lm for describing a model formulation
+#model1<-lm(y~x1*x2*x3+I(x1^2)+I(x2^2)+I(x3^2))
+#model2<-step(model1)
+
+
+##Some important things to think about when doing multiple regression
+#1 - the curvature of the response variable
+#2 - interaction between explanatory variables
+#3 - correlaction between explanatory variables
+#4 - the risk of overparameterization
+#5 - rule of thumb: don't try to estimate more than n/3 coefficients!!, where n is the number of
+# observations (Crawley's book, page 949 - because there won't be degrees of freedom enough for explaining the model). 
+#In our case, initially with 3 parameters, we wish estimate 10 coefficients (linear,
+# quadratic, interaction terms and intercept). Therefore we need of at least 33 observations.
+
+
+#Common problems arising during multiple regression
+#differences in the measurement scales of the explanatory variables, leading to large
+#variation in the sums of squares and hence to an ill-conditioned matrix;
+#multicollinearity, in which there is a near-linear relation between two of the explanatory
+#variables, leading to unstable parameter estimates;
+#rounding errors during the fitting procedure;
+#non-independence of groups of measurements;
+#temporal or spatial correlation amongst the explanatory variables;
+#pseudoreplication.
+
+#Another chapters I have to study later
+#multiple regressions in the context of generalized linear models (Chapter 13),
+#generalized additive models (Chapter 18), survival models (Chapter 25) and mixed-effects
+#models (Chapter 19)

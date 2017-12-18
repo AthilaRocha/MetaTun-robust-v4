@@ -1,0 +1,24 @@
+This document contains brief instructions in order to run the MetaTun Agorithm. This version considers using robust regression methods in order to tune the algorithm parameters and predict their behavior over the parameters space.
+
+The main function MetaTun needs 6 parameters, namely:
+
+- niter: the number of iterations to be executed
+- optpar: a vector (x1,...,xn) representing the best parameter values
+- fvalueopt: the best function value
+- Function: The name of function
+- typeofmethod: the method used for obtaining the regression models. The values accepted are: "linearreg" or "Rbf"
+- typeofresult: the type of values representing the response variable values for obtaining the regression models. This parameter accepts the values: "mean" (for using average standardized performance), "sumrankings" (for using the summation of performance rankings), or "meanrankings" (for using the average performance rankings).
+
+In the folder 'MetaTun' there are csv files containing informations about parameters. The Files Function1.csv, Function2.csv, Function3.csv, FunctionAckley.csv, FunctionPeaks.csv, FunctionRastrigin.csv and FunctionSchwef.csv describe the parameters and their type and ranges.
+
+The folders filexstar.csv and filefopt.csv describe the best points and best function values for each function used in this version of MetaTun.
+
+The file filefunctions.csv contains the filenames where are the informatioins about the functions.
+
+In order to run MetaTun for each one of the 7 functions used (for instance: Function1), the following code has to be typed:
+
+ MetaTun(10,c(0,0,0),5,"Function1") - here, typeofmethod and typeofresult takes their standard values
+
+For running MetaTun for all functions, the function RunTests (file Tests.R) has to be used.
+
+

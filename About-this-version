@@ -1,0 +1,3 @@
+This version implements a parameter tuning method that can use 4 regression models: OLS, Quantile, Ridge and Lasso Regression. The user can inform (as a parameter) the regression model to be used during the tuning process.
+
+This version allows the user to execute the tuning method using parallel processing, as well as describe a simple function called "functuning" that need two parameters "candidate" and "instance" and returns the target-algorithm objective function value. Furthermore, this version performs a weighted regression at each iteration (with OLS and quantile versions), evaluating only the best candidate configurations at each iteration.

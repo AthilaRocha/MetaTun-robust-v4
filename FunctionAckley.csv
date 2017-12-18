@@ -1,0 +1,4 @@
+name,min,max,values,type
+Mutation,-2,20,NA,r
+Crossover,-3,32.768,NA,r
+Selection,-32.768,32.768,NA,r
