@@ -1,1 +1,3 @@
 # MetaTun-robust-v4
+
+This project is related to a SMBO-based algorithm tuning method. This method iteratively generate and optimize algorithm predictive models, obtaining good (ideally the best) algorithm parameter values. These models are generated after evaluating a set of algorithm candidate configurations on a set of training instances. The worst configurations obtained at one iteration are not evaluated at future iterations, and the predictive models are obtained using weight regression modeling (ols and quantile) and ridge and lasso regression. The evaluation of candidate configurations and optimization of predictive models are made throught parallel processing.
